@@ -2,54 +2,83 @@ version: 2.1
 
 executors:
   docker-executor:
+    # Using a specific version is often better than 'latest' for reproducibility
+    # Ensure this image has kubectl and gcloud installed
     docker:
       - image: google/cloud-sdk:latest
-    working_directory: ~/repo
+    working_directory: ~/repo # Repository code will be checked out here
 
 jobs:
   checkout_code:
     executor: docker-executor
     steps:
-      - checkout
+      - checkout # Checks out the code into the working_directory (~/repo)
 
   build_docker_image:
     executor: docker-executor
     steps:
-      - checkout
-      - setup_remote_docker
+      - checkout # Ensure code is present for building
+      - setup_remote_docker # Required for building Docker images in CircleCI
       - run:
           name: Authenticate with google cloud
           command: |
-              echo "$GCLOUD_SERVICE_KEY" | base64 --decode > gcp-key.json
-              gcloud auth activate-service-account --key-file=gcp-key.json
-              gcloud auth configure-docker us-central1-docker.pkg.dev || gcloud auth configure-docker
+            # Decode the base64 service key and save it to a file
+            echo "$GCLOUD_SERVICE_KEY" | base64 --decode > gcp-key.json
+            # Activate the service account using the key file
+            gcloud auth activate-service-account --key-file=gcp-key.json
+            # Configure Docker to authenticate with Artifact Registry
+            # The || gcloud auth configure-docker is a fallback, but specifying the registry is better
+            gcloud auth configure-docker us-central1-docker.pkg.dev
 
       - run:
           name: Build and Push Image
           command: |
-              docker build -t us-central1-docker.pkg.dev/$GOOGLE_PROJECT_ID/mlops-app/mlops-app:latest .
-              docker push us-central1-docker.pkg.dev/$GOOGLE_PROJECT_ID/mlops-app/mlops-app:latest
+            # Define the full image path including project ID and repo name
+            IMAGE_PATH="us-central1-docker.pkg.dev/$GOOGLE_PROJECT_ID/mlops-app/mlops-app:latest"
+            # Build the Docker image from the Dockerfile in the current directory (.)
+            docker build -t $IMAGE_PATH .
+            # Push the built image to Artifact Registry
+            docker push $IMAGE_PATH
 
   deploy_to_gke:
     executor: docker-executor
     steps:
-      - checkout
-      - setup_remote_docker
+      - checkout # Ensure code is present for deployment
+      - setup_remote_docker # Might not be strictly needed for deploy, but doesn't hurt
+
       - run:
           name: Authenticate with google cloud
           command: |
-              echo "$GCLOUD_SERVICE_KEY" | base64 --decode > gcp-key.json
-              gcloud auth activate-service-account --key-file=gcp-key.json
-              gcloud auth configure-docker us-central1-docker.pkg.dev || gcloud auth configure-docker
-      
+            # Re-authenticate in this job as jobs run independently
+            echo "$GCLOUD_SERVICE_KEY" | base64 --decode > gcp-key.json
+            gcloud auth activate-service-account --key-file=gcp-key.json
+            # Configure Docker auth again, just in case (though kubectl pull doesn't strictly need it here)
+            gcloud auth configure-docker us-central1-docker.pkg.dev
+
       - run:
           name: Configure GKE
           command: |
-              gcloud container clusters get-credentials $GKE_CLUSTER --region $GOOGLE_COMPUTE_REGION --project $GOOGLE_PROJECT_ID
+            # Get credentials for kubectl to interact with the GKE cluster
+            gcloud container clusters get-credentials $GKE_CLUSTER --region $GOOGLE_COMPUTE_REGION --project $GOOGLE_PROJECT_ID
+
+      # --- Debugging Steps (Uncomment if needed) ---
+      # - run:
+      #     name: Show current directory before apply
+      #     command: pwd
+      # - run:
+      #     name: List files in current directory before apply
+      #     command: ls -al
+      # - run:
+      #     name: List files in k8s directory (if applicable)
+      #     command: ls -al k8s/ # Adjust 'k8s' if your YAML is elsewhere
+      # ---------------------------------------------
+
       - run:
           name: Deploy to GKE
           command: |
-              kubectl apply -f kubernetes-deployment.yaml
+            # Corrected path to the YAML file - ASSUMING it's in a 'k8s' subdirectory
+            # If your file is in a different location, update this path accordingly
+            kubectl apply -f k8s/kubernetes-deployment.yaml
 
 workflows:
   version: 2
@@ -61,11 +90,5 @@ workflows:
             - checkout_code
       - deploy_to_gke:
           requires:
-            - build_docker_image
-
-    
-
-
-
-
+            - build_docker_image # Ensure image is built before deploying
 
