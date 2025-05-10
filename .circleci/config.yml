@@ -47,11 +47,12 @@ jobs:
       - run:
           name: Configure GKE
           command: |
-              gcloud container clusters get-credentials $GKE_CLUSTER --region $GOOGLE_COMPUTE_REGION --project $GOOGLE_PROJECT_ID
+              gcloud container clusters get-credentials "$GKE_CLUSTER" --region "$GOOGLE_COMPUTE_REGION" --project "$GOOGLE_PROJECT_ID"
       - run:
           name: Deploy to GKE
           command: |
               kubectl apply -f kubernetes-deployment.yaml
+              kubectl rollout status deployment/mlops-app || true
 
 workflows:
   version: 2
